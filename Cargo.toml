@@ -1,0 +1,20 @@
+[package]
+name = "twitch-curses"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+# TUI library (my fork)
+ratatui = { git = "https://github.com/bolshoytoster/ratatui" }
+# ratatui backend
+crossterm = "*"
+# {,De}serialization
+serde = { version = "*", features = ["derive"] }
+# JSON (faster than the serde one)
+simd-json = "*"
+# HTTPS
+curl = "*"
+# Date formatting
+chrono = "*"
