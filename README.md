@@ -23,4 +23,35 @@ I did this instead of revising.
 - - Search: you know
 - You can watch streams, clips and VODs at any quality
 
+## Running
+
+```sh
+$ cargo run # Optionally `--release`
+```
+
+## Controls
+
+Enjoy the following pseudocode:
+```rust
+match key {
+  'Q' => quit,
+  UpArrow | 'J' => up,
+  DownArrow | 'K' => down,
+  PageUp => page up,
+  PageDown => page down,
+  RightArrow | 'L' => match current_selection {
+    Stream => play stream with streamlink,
+    Game/Category => display streams under category,
+    Clip => play clip with player,
+    Video => play VOD with player,
+  },
+  LeftArrow | 'B' => go back,
+  'H' => go back to home,
+  '+' => increase default quality,
+  '-' => decrease default quality,
+  'S' | '/' => open search box, until enter key is pressed,
+  'R' => refresh page,
+}
+```
+
 Feel free to submit issues/PRs if you have any suggestions.
