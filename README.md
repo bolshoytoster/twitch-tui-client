@@ -23,10 +23,42 @@ I did this instead of revising.
 - - Search: you know
 - You can watch streams, clips and VODs at any quality
 
+### Chat
+
+This program also supports read-only chat via irc. It supports some basic features:
+
+- Displays notices
+- Displays users' colours
+- Displays some badges (most of the colours here depend on your terminal theme):
+- - Predictions
+- - Sub badges are displayed as `sub/{months subbed for}`
+- - Partner (verified) is displayed as a ✓ with a magenta background
+- - Twitch premium is a 👑 with a blue background
+- - Moderator badges are a 🗡️ with a green background
+- - "Moments" badges are displayed as a 📷 with the background depending on the number of moments
+- - "no audio" badges are a 🔇 with a black background
+- - "no video" badges are a 👁 with a black background and strikethrough
+- - "sub gifter" badges are a 🎁 with the colour depending on the number of gifted subs
+- - VIP badges are a 💎 with a light magenta background
+
+It currently lacks the following that I probably won't add, since they won't benefit me (PRs are welcome):
+
+- Can't display arbritrary badges.
+- No scrollback
+- You can't log in or chat
+
+Controls for chat are just left/right arrow keys to change tabs and `q` to quit.
+
 ## Running
 
 ```sh
 $ cargo run # Optionally `--release`
+```
+
+If you don't want to see chat, you can run:
+
+```sh
+$ cargo run --no-default-features # Optionally `--release`
 ```
 
 ## Controls

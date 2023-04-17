@@ -6,11 +6,8 @@ use ratatui::widgets::BorderType;
 
 use crate::structs::*;
 
-/// Program used to play videos and streams
-pub const PLAYER: &str = "ffplay";
-
-/// Extra args for the player
-pub const PLAYER_ARGS: &[&str] = &[];
+/// Program and args used to play videos and streams
+pub const PLAYER: &[&str] = &["ffplay", "-autoexit"];
 
 /// Quality of the streams/videos played, first item is prioritised.
 /// The first item can be changed at runtime with +/-.
@@ -29,15 +26,19 @@ pub const HEADERS: &[&str] = &[
 	// You can find more info
 	// [on mozilla's docs](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Accept-Language)
 	"Accept-Language:en",
+	// You can add more, but they probably won't have any effect
 ];
 
 /// Show download progress?
 pub const DOWNLOAD_PROGRESS: bool = true;
 
 /// The request used for the home page.
-/// Usually either `Shelves` (the main home page) or `PersonalSections` (The bit on the left on the
+/// Usually either `Shelves` (the main home page) or `PersonalSection` (The bit on the left on the
 /// webapp). It could also be a category (`Game("Just Chatting")`) or a search (`Search("Lol")`).
-pub const HOME_PAGE: HomePage = HomePage::Shelves;
+///
+/// I recommend setting this to `PersonalSection` if you don't usually use the home page or you
+/// want quicker load times, since it's only ~9kb, and `Shelves` is ~1mb (~100x larger).
+pub const HOME_PAGE: HomePage = HomePage::PersonalSection;
 
 /// How to display dates.
 /// `None` means to show a relative date (i.e. "18 hours ago"),
@@ -63,7 +64,7 @@ pub const BORDER_TYPE: BorderType = BorderType::Plain;
 // ----------------
 
 // These 3 are for the reccommended section (The column on the left on the twitch website), which
-// isn't fetched by default. You can add it above.
+// isn't fetched by default. You can set it above.
 
 impl Default for RecommendationContext {
 	fn default() -> Self {
@@ -96,11 +97,13 @@ impl Default for RecommendationContext {
 
 enum PersonalSectionType {
 	RecommendedSection,
+	SimilarSection,
 }
 impl Into<&str> for PersonalSectionType {
 	fn into(self) -> &'static str {
 		match self {
 			PersonalSectionType::RecommendedSection => "RECOMMENDED_SECTION",
+			PersonalSectionType::SimilarSection => "SIMILAR_SECTION",
 		}
 	}
 }
@@ -110,8 +113,11 @@ impl Default for PersonalSectionsInput {
 		// `sectionInputs` is the `Vec` of sections in the personal section
 		Self {
 			sectionInputs: vec![PersonalSectionType::RecommendedSection.into()],
-			// `Some(RecommendationContext::default())`
-			recommendationContext: None,
+			recommendationContext: RecommendationContext::default(),
+			// Add `PersonalSectionType::SimilarSection.into()` to `sectionInputs` if you want to
+			// use this.
+			// `Some("someone")`
+			contextChannelName: None,
 		}
 	}
 }

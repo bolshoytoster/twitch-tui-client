@@ -1,3 +1,6 @@
+//! Structures used for JSON {,de}serialization in twitch HTTPS requests. These also provide some
+//! convenience methods such as [`TwitchResponse::to_widgets`] and [`Node::select`].
+
 // For the JSON stuff:
 #![allow(non_snake_case)]
 #![allow(non_camel_case_types)]
@@ -15,14 +18,16 @@ use crossterm::terminal::{
 	disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
 use curl::easy::Easy;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::backend::Backend;
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Span, Spans, Text};
 use ratatui::widgets::{List, ListItem, Paragraph, Wrap};
+use ratatui::Terminal;
 use serde::{Deserialize, Serialize};
 use simd_json::from_slice;
 
 use crate::config::*;
-use crate::request;
+use crate::utils::*;
 
 /// Takes text and makes it take an extra line
 fn spaced<'a, T: Into<Spans<'a>>>(text: T) -> Text<'a> {
@@ -52,32 +57,12 @@ fn format_date(string: &String) -> String {
 			// Relative time
 			let delta = Utc::now().signed_duration_since(dt).num_seconds();
 
-			// This is needed since expressions can't be used in match conditions
-			const MINUTE: i64 = 60;
-			const HOUR: i64 = 60 * MINUTE;
-			const DAY: i64 = 24 * HOUR;
-			const MONTH: i64 = 365 / 12 * DAY;
-			const YEAR: i64 = 365 * DAY;
-
-			const NEG_MINUTE: i64 = -MINUTE;
-			const NEG_HOUR: i64 = -HOUR;
-			const NEG_DAY: i64 = -DAY;
-			const NEG_MONTH: i64 = -MONTH;
-			const NEG_YEAR: i64 = -YEAR;
-
-			match delta {
-				..NEG_YEAR => format!("In {} years", -delta / 365 / 24 / 60 / 60),
-				NEG_YEAR..NEG_MONTH => format!("In {} months", -delta / (365 / 12) / 24 / 60 / 60),
-				NEG_MONTH..NEG_DAY => format!("In {} days", -delta / 24 / 60 / 60),
-				NEG_DAY..NEG_HOUR => format!("In {} hours", -delta / 60 / 60),
-				NEG_HOUR..NEG_MINUTE => format!("In {} minutes", -delta / 60),
-				NEG_MINUTE..0 => format!("In {} seconds", -delta),
-				0..MINUTE => format!("{delta} seconds ago"),
-				MINUTE..HOUR => format!("{} minutes ago", delta / 60),
-				HOUR..DAY => format!("{} hours ago", delta / 60 / 60),
-				DAY..MONTH => format!("{} days ago", delta / 24 / 60 / 60),
-				MONTH..YEAR => format!("{} months ago", delta / (365 / 12) / 24 / 60 / 60),
-				YEAR.. => format!("{} years ago", delta / 365 / 24 / 60 / 60),
+			if delta < 0 {
+				// It's in the future
+				["In ", &format_seconds(delta.abs())].concat()
+			} else {
+				// It's in the past
+				[&format_seconds(delta.abs()), " ago"].concat()
 			}
 		}
 	} else {
@@ -125,7 +110,9 @@ pub struct RecommendationContext {
 #[derive(Serialize)]
 pub struct PersonalSectionsInput {
 	pub sectionInputs: Vec<&'static str>,
-	pub recommendationContext: Option<RecommendationContext>,
+	// It's optional for RECOMMENDED_SECTION, but required for SIMILAR_SECTION
+	pub recommendationContext: RecommendationContext,
+	pub contextChannelName: Option<&'static str>,
 }
 
 pub trait Variables: Default {
@@ -314,12 +301,10 @@ impl User {
 	// Get a [`ratatui::Style`] with the user's colour as forground.
 	fn style(&self) -> Style {
 		Style {
-			fg: self.primaryColorHex.clone().map(|primary_colour_hex| {
-				let parsed = i32::from_str_radix(&primary_colour_hex, 16)
-					.expect("Server sent an invalid hex colour");
-
-				Color::Rgb((parsed >> 16) as u8, (parsed >> 8) as u8, parsed as u8)
-			}),
+			fg: self
+				.primaryColorHex
+				.as_ref()
+				.map(|primary_colour_hex| parse_colour(&primary_colour_hex)),
 			..Style::default()
 		}
 	}
@@ -473,7 +458,12 @@ pub enum Node {
 }
 impl Node {
 	/// Select this node. Returns the game name if it needs to be moved into.
-	pub fn select(&self, easy: &mut Easy, qualities: &[&str]) -> Option<String> {
+	pub fn select<B: Backend>(
+		&self,
+		terminal: &mut Terminal<B>,
+		easy: &mut Easy,
+		qualities: &[&str],
+	) -> Option<String> {
 		match self {
 			Node::Clip { slug, .. } => {
 				let _ = disable_raw_mode();
@@ -529,8 +519,8 @@ impl Node {
 					}
 				}
 
-				let _ = Command::new(PLAYER)
-					.args(PLAYER_ARGS)
+				let _ = Command::new(PLAYER[0])
+					.args(&PLAYER[1..])
 					.arg(
 						[
 							source_url,
@@ -549,7 +539,7 @@ impl Node {
 						.concat(),
 					)
 					.spawn()
-					.expect(&format!("Should be able to spawn PLAYER ({PLAYER})"))
+					.expect(&["Should be able to spawn PLAYER (", &PLAYER.join(" "), ")"].concat())
 					.wait();
 
 				let _ = enable_raw_mode();
@@ -562,24 +552,30 @@ impl Node {
 				broadcaster: User { login, .. },
 				..
 			} => {
-				let _ = disable_raw_mode();
+				// Load chat UI if enabled
+				#[cfg(feature = "chat")]
+				crate::irc::play_stream(terminal, login, qualities);
 
-				// We want to be in a normal terminal
-				let _ = execute!(stdout(), LeaveAlternateScreen);
+				// Otherwise, just run the stream
+				#[cfg(not(feature = "chat"))]
+				{
+					let _ = disable_raw_mode();
+					// We want to be in a normal terminal
+					let _ = execute!(stdout(), LeaveAlternateScreen);
 
-				let _ = Command::new("streamlink")
-					.args([
-						format!("-p={PLAYER} {}", PLAYER_ARGS.join(" ")),
-						format!("twitch.tv/{login}"),
-						qualities.join(","),
-					])
-					.spawn()
-					.expect("Should be able to spawn streamlink")
-					.wait();
+					let _ = Command::new("streamlink")
+						.args([
+							["-p=", &PLAYER.join(" ")].concat(),
+							["twitch.tv/", login].concat(),
+							qualities.join(","),
+						])
+						.spawn()
+						.expect("Should be able to spawn streamlink")
+						.wait();
 
-				let _ = enable_raw_mode();
-
-				let _ = execute!(stdout(), EnterAlternateScreen);
+					let _ = enable_raw_mode();
+					let _ = execute!(stdout(), EnterAlternateScreen);
+				}
 
 				None
 			}
@@ -662,15 +658,15 @@ impl Node {
 					};
 				}
 
-				let _ = Command::new(PLAYER)
-					.args(PLAYER_ARGS)
+				let _ = Command::new(PLAYER[0])
+					.args(&PLAYER[1..])
 					.arg(
 						// Default to best quality
 						url.unwrap_or(split.nth(4))
 							.expect("Should be able to get a VOD URL"),
 					)
 					.spawn()
-					.expect(&format!("Should be able to spawn PLAYER ({PLAYER})"))
+					.expect(&["Should be able to spawn PLAYER (", &PLAYER.join(" "), ")"].concat())
 					.wait();
 
 				let _ = enable_raw_mode();
@@ -771,7 +767,7 @@ struct FollowerConnection {
 
 #[derive(Deserialize, Debug)]
 struct Broadcast {
-	startedAt: String,
+	startedAt: Option<String>,
 	// Ignore `id` and `__typename`
 }
 
@@ -783,7 +779,7 @@ struct ScheduleSegmentGame {
 #[derive(Deserialize, Debug)]
 struct ScheduleSegment {
 	startAt: String,
-	endAt: String,
+	endAt: Option<String>,
 	title: String,
 	categories: Vec<ScheduleSegmentGame>, // Ignore `id`, `hasReminder` and `__typename`
 }
@@ -796,6 +792,25 @@ struct Schedule {
 #[derive(Deserialize, Debug)]
 struct Channel {
 	schedule: Option<Schedule>, // Ignore `id` and `__typename`
+}
+
+#[derive(Deserialize, Debug)]
+struct Video {
+	id: String,
+	// Up to 48 hours
+	lengthSeconds: u32,
+	// Ignore `title`, `previewThumbnailURL` and `__typename`
+}
+
+#[derive(Deserialize, Debug)]
+struct VideoEdge {
+	node: Video, // Ignore `__typename`
+}
+
+#[derive(Deserialize, Debug)]
+struct VideoConnection {
+	edges: Vec<VideoEdge>,
+	// Ignore `__typrname`
 }
 
 #[derive(Deserialize, Debug)]
@@ -833,6 +848,7 @@ struct SearchForEdgeUser {
 	login: String,
 	description: Option<String>,
 	channel: Channel,
+	latestVideo: VideoConnection,
 	topClip: ClipConnection,
 	roles: UserRoles,
 	stream: Option<SearchForEdgeStream>,
@@ -850,38 +866,74 @@ impl SearchForEdgeUser {
 			["Followers: ", &self.followers.totalCount.to_string()]
 				.concat()
 				.into(),
-			["Started: ", &format_date(&self.lastBroadcast.startedAt)]
-				.concat()
-				.into(),
+			[
+				"Started: ",
+				&self
+					.lastBroadcast
+					.startedAt
+					.as_ref()
+					.map_or("Never".to_owned(), |x| format_date(&x)),
+			]
+			.concat()
+			.into(),
 			["Partner: ", if self.roles.isPartner { "Yes" } else { "No" }]
 				.concat()
 				.into(),
 		];
 
-		if let Some(stream) = self.stream {
-			lines.extend([
-				[
-					"Game: ",
-					&stream.game.displayName.unwrap_or(stream.game.name),
-				]
-				.concat()
-				.into(),
-				["Viewers: ", &stream.viewersCount.to_string()]
+		// Add the appropriate items for stream/VOD/nothing
+		let node = if self.lastBroadcast.startedAt.is_some() {
+			if let Some(stream) = self.stream {
+				//They're streaming right now
+				lines.extend([
+					[
+						"Game: ",
+						&stream.game.displayName.unwrap_or(stream.game.name),
+					]
 					.concat()
 					.into(),
-				[
-					"Tags: ",
-					&stream
-						.freeformTags
-						.iter()
-						.map(|tag| tag.name.clone())
-						.collect::<Vec<String>>()
-						.join(", "),
-				]
-				.concat()
-				.into(),
-			]);
-		}
+					["Viewers: ", &stream.viewersCount.to_string()]
+						.concat()
+						.into(),
+					[
+						"Tags: ",
+						&stream
+							.freeformTags
+							.iter()
+							.map(|tag| tag.name.clone())
+							.collect::<Vec<String>>()
+							.join(", "),
+					]
+					.concat()
+					.into(),
+				]);
+
+				// Their current stream
+				self.login.into()
+			} else if self.latestVideo.edges.len() == 0 {
+				// They have streamed before, but we didn't get a VOD
+				Node::None
+			} else {
+				// They're not currently streaming, show most recent VOD
+				lines.extend([
+					"".into(),
+					"Not currently streaming, you can watch their latest VOD".into(),
+					[
+						"Length: ",
+						&self.latestVideo.edges[0].node.lengthSeconds.to_string(),
+						" s",
+					]
+					.concat()
+					.into(),
+				]);
+
+				// Their last stream
+				Node::Video(self.latestVideo.edges[0].node.id.clone())
+			}
+		} else {
+			// They've never streamed
+			Node::None
+		};
 
 		if let Some(description) = self.description {
 			lines.extend(["".into(), description.into()]);
@@ -898,9 +950,16 @@ impl SearchForEdgeUser {
 				["Starts: ", &format_date(&next_segment.startAt)]
 					.concat()
 					.into(),
-				["Ends: ", &format_date(&next_segment.endAt)]
-					.concat()
-					.into(),
+				[
+					"Ends: ",
+					&if let Some(end_at) = &next_segment.endAt {
+						format_date(&end_at)
+					} else {
+						"tbd".to_owned()
+					},
+				]
+				.concat()
+				.into(),
 				[
 					"Categories: ",
 					&next_segment
@@ -915,10 +974,9 @@ impl SearchForEdgeUser {
 			]);
 		}
 
-		items_list.1.push((
-			Paragraph::new(lines).wrap(Wrap { trim: false }),
-			self.login.into(),
-		));
+		items_list
+			.1
+			.push((Paragraph::new(lines).wrap(Wrap { trim: false }), node));
 
 		// If there is a top clip
 		if self.topClip.edges.len() == 1 {

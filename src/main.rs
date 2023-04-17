@@ -1,6 +1,10 @@
-#![feature(exclusive_range_pattern)]
+//! A twitch client. lol
 
-use std::io::{stdout, Read};
+#![feature(exclusive_range_pattern)]
+#![feature(is_some_and)]
+#![feature(let_chains)]
+
+use std::io::stdout;
 
 use config::*;
 use crossterm::event::{read, Event, KeyCode, KeyEvent};
@@ -11,16 +15,20 @@ use crossterm::terminal::{
 use curl::easy::{self, Easy};
 
 mod config;
+#[cfg(feature = "chat")]
+mod irc;
 mod structs;
+mod utils;
 use std::panic::{set_hook, take_hook};
 
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Alignment, Rect};
 use ratatui::widgets::{Block, Borders, List, ListState, Paragraph};
 use ratatui::Terminal;
-use serde::Serialize;
-use simd_json::{from_slice, to_vec};
+use simd_json::from_slice;
 use structs::*;
+
+use crate::utils::*;
 
 /// Current page + information on previous pages
 enum Page {
@@ -133,29 +141,6 @@ impl ToString for Page {
 	}
 }
 
-/// Send a request and return it as a `Vec<u8>`.
-fn request<J: Serialize + ?Sized>(easy: &mut Easy, json: &J) -> Vec<u8> {
-	let mut data = &*to_vec(json).expect("Should be able to serialize POST data");
-
-	let mut vec = Vec::new();
-
-	// Make sure `transfer` is dropped before we use can `vec` again
-	{
-		let mut transfer = easy.transfer();
-
-		let _ = transfer.read_function(|slice| Ok(data.read(slice).unwrap_or(0)));
-		let _ = transfer.write_function(|slice| {
-			// Copy the packet to the buffer
-			vec.extend_from_slice(slice);
-			Ok(slice.len())
-		});
-
-		transfer.perform().unwrap();
-	}
-
-	vec
-}
-
 fn main() {
 	// Default to ["best"]
 	let mut qualities = if QUALITY.len() == 0 {
@@ -201,9 +186,6 @@ fn main() {
 
 	let mut page = Page::Home { selection: 0 };
 
-	// Fetch data
-	let (mut list, mut info_vec) = page.request(&mut easy);
-
 	// Init crossterm
 	let _ = enable_raw_mode();
 
@@ -211,6 +193,9 @@ fn main() {
 
 	// Clear screen
 	let _ = terminal.clear();
+
+	// Fetch data
+	let (mut list, mut info_vec) = page.request(&mut easy);
 
 	// Should we redraw this frame?
 	let mut redraw = true;
@@ -327,7 +312,7 @@ fn main() {
 					if let Some(name) = info_vec
 						[list_state.selected().expect("Something should be selected")]
 					.1
-					.select(&mut easy, &*qualities)
+					.select(&mut terminal, &mut easy, &*qualities)
 					{
 						// If we selected a category
 

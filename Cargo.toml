@@ -18,3 +18,15 @@ simd-json = "*"
 curl = "*"
 # Date formatting
 chrono = "*"
+# Chat
+irc = { version = "*", optional = true }
+# Line wrapping, since ratatui doesn't expose it's internal one
+textwrap = { version = "*", optional = true }
+# Async
+tokio = { version = "*", features = ["full"], optional = true }
+futures = { version = "*", optional = true }
+
+[features]
+default = ["chat"]
+# These are only needed for chat
+chat = ["irc", "crossterm/event-stream", "textwrap", "tokio", "futures"]
