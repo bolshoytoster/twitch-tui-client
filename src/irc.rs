@@ -8,25 +8,31 @@ use std::collections::VecDeque;
 use std::process::Stdio;
 
 use crossterm::event::{Event, EventStream, KeyCode};
-use futures::StreamExt;
+use curl::easy::Easy;
+use futures::{SinkExt, StreamExt};
 use irc::client::prelude::Config;
 use irc::client::{Client, ClientStream};
-use irc::proto::{self, Capability, Message};
+use irc::proto::{self, Capability};
 use ratatui::backend::Backend;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Span, Spans};
-use ratatui::widgets::{Block, Borders, List, ListItem, Tabs};
+use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Tabs};
 use ratatui::Terminal;
+use serde::Deserialize;
+use simd_json::from_slice;
 use textwrap::wrap;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process;
+use tokio::time::{interval, Duration};
+use tokio_tungstenite::connect_async;
+use tokio_tungstenite::tungstenite::protocol;
 
 use crate::config::*;
 use crate::utils::*;
 
-/// Connect to the channel's RFC server and return it's `ClientStream`.
-async fn connect_rfc_client(login: &str) -> ClientStream {
+/// Connect to the channel's IRC server and return it's `ClientStream`.
+async fn connect_irc_client(login: &str) -> ClientStream {
 	let mut client = Client::from_config(Config {
 		channels: vec![["#", login].concat()],
 		// Anonymous
@@ -60,8 +66,8 @@ fn add_to_queue<T>(queue: &mut VecDeque<T>, item: T, limit: u16) {
 }
 
 /// Handles Incoming RFC message
-fn handle_rfc_command(
-	message: Message,
+fn handle_irc_command(
+	message: proto::Message,
 	chat: &mut VecDeque<ListItem>,
 	info: &mut Vec<ListItem>,
 	log: &mut VecDeque<ListItem>,
@@ -184,7 +190,11 @@ fn handle_rfc_command(
 						style: Style {
 							fg: tags
 								.find(|x| x.0 == "color")
-								.map(|x| x.1.as_ref().map(|x| parse_colour(&x[1..])))
+								.map(|x| {
+									x.1.filter(|x| !x.is_empty())
+										.as_ref()
+										.map(|x| parse_colour(&x[1..]))
+								})
 								.flatten(),
 							..Style::default()
 						},
@@ -228,11 +238,7 @@ fn handle_rfc_command(
 									// This is also in `badges`, but sometimes wrong
 									"subscriber" => subscriber = Some(parts.1.to_owned()),
 									// Log unknown badges
-									b => add_to_queue(
-										log,
-										ListItem::new(["Unknown badge: ", b].concat()),
-										terminal_rect.height - 3,
-									),
+									_ => (),
 								}
 							}
 						}
@@ -419,7 +425,7 @@ fn handle_rfc_command(
 			}
 
 			// Width of the user metadata (badges/name)
-			let meta_width = vec.iter().map(|x| x.width()).sum();
+			let meta_width = vec.iter().map(Span::width).sum();
 
 			// Wrap text if it needs to be
 			let wrapped_text = wrap(&msg, terminal_rect.width as usize - meta_width - 2);
@@ -447,9 +453,141 @@ fn handle_rfc_command(
 	}
 }
 
+/// A user from  websocket response
+#[derive(Deserialize)]
+struct User {
+	display_name: String, // Ignore `id` and `login`
+}
+
+/// Information about a reward
+#[derive(Deserialize)]
+struct Reward {
+	title: String,
+	// Max cost is 2^31 - 1, so fits in 32 bits
+	cost: u32,
+	background_color: String,
+	// Ignore `id`, `channel_id`, `prompt`, `is_user_input_required`, `is_sub_only`, `image`,
+	// `default_image`, `is_enabled`, `is_paused`, `is_in_stock` and `max_per_stream`
+}
+
+/// Information about a reward redemption
+#[derive(Deserialize)]
+struct Redemption {
+	user: User,
+	reward: Reward, // Ignore `id`, `channel_id`, `redeemed_at`, `status` and `cursor`
+}
+
+/// Data for community points event
+#[derive(Deserialize)]
+struct CommunityPointsChannelV1Data {
+	redemption: Redemption,
+	// Ignore `timestamp`
+}
+
+/// An event to do with community points, i.e. redeeming a reward
+#[derive(Deserialize)]
+struct CommunityPointsChannelV1 {
+	data: CommunityPointsChannelV1Data, // Ignore `type`
+}
+
+/// View count
+#[derive(Deserialize)]
+struct VideoPlaybackById {
+	viewers: u32,
+	// Ignore `type` and `server_time`
+}
+
+/// Data from a websocket response message
+#[derive(Deserialize)]
+struct WebsocketMessageData {
+	topic: String,
+	message: String,
+}
+
+/// Message from the twitch websocket
+#[derive(Deserialize)]
+struct WebsocketMessage {
+	data: Option<WebsocketMessageData>,
+	// Ignore `type`
+}
+
+fn handle_websocket_message(
+	mut text: String,
+	terminal_size: Rect,
+	chat: &mut VecDeque<ListItem>,
+	log: &mut VecDeque<ListItem>,
+	viewers: &mut Paragraph,
+) {
+	if let Ok(WebsocketMessage {
+		data: Some(mut data),
+	}) = from_slice::<WebsocketMessage>(unsafe { text.as_bytes_mut() })
+	{
+		let (topic, channel_id) = data.topic.split_once('.').expect("Topic should have a dot");
+
+		let message = unsafe { data.message.as_bytes_mut() };
+
+		match topic {
+			"community-points-channel-v1" => {
+				let redemption = from_slice::<CommunityPointsChannelV1>(message)
+					.expect("Websocket message should be valid JSON")
+					.data
+					.redemption;
+
+				add_to_queue(
+					chat,
+					ListItem::new(Span {
+						content: [
+							&redemption.user.display_name,
+							" redeemed ",
+							&redemption.reward.title,
+							" (",
+							&redemption.reward.cost.to_string(),
+							")",
+						]
+						.concat()
+						.into(),
+						style: Style {
+							fg: Some(parse_colour(&redemption.reward.background_color[1..])),
+							..Style::default()
+						},
+					}),
+					terminal_size.height - 3,
+				);
+			}
+			"video-playback-by-id" => {
+				if let Ok(video_playback_by_id) = &from_slice::<VideoPlaybackById>(message) {
+					*viewers = Paragraph::new(Span {
+						content: ["👤", &video_playback_by_id.viewers.to_string()]
+							.concat()
+							.into(),
+						style: Style {
+							fg: Some(Color::Red),
+							..Style::default()
+						},
+					});
+				}
+			}
+			// Log unknown message
+			u => wrap(&[u, " ", &data.message].concat(), {
+				let mut options = textwrap::Options::new(terminal_size.width as usize - 2);
+				options.word_separator = textwrap::WordSeparator::UnicodeBreakProperties;
+				options
+			})
+			.into_iter()
+			.for_each(|x| add_to_queue(log, ListItem::new([x].concat()), terminal_size.height - 3)),
+		}
+	}
+}
+
 /// Connect to a stream and display chat
 #[tokio::main]
-pub async fn play_stream<B: Backend>(terminal: &mut Terminal<B>, login: &str, qualities: &[&str]) {
+pub async fn play_stream<B: Backend>(
+	terminal: &mut Terminal<B>,
+	easy: &mut Easy,
+	login: &str,
+	id: &String,
+	qualities: &[&str],
+) {
 	let mut child = process::Command::new("streamlink")
 		.args([
 			["-p=", &PLAYER.join(" ")].concat(),
@@ -477,8 +615,67 @@ pub async fn play_stream<B: Backend>(terminal: &mut Terminal<B>, login: &str, qu
 	)
 	.lines();
 
-	// Connect
-	let mut client_stream = connect_rfc_client(login).await;
+	// Connect to IRC
+	let mut client_stream = connect_irc_client(login).await;
+
+	// Connect to websocket
+	let mut web_socket_stream = connect_async("wss://pubsub-edge.twitch.tv/v1")
+		.await
+		.expect("Should be able to connect to twitch websocket")
+		.0;
+
+	// Ping every 4 minutes so it doesn't time out
+	// It could be up to 7 minutes, but this is what the webapp does
+	let mut ping_interval = interval(Duration::new(4 * 60, 0));
+
+	// Listen to all the events that the web client does, minus "ads"/"ad-property-refresh"
+	// The twitch websocket requires you to send each as an individual packet
+	for topic in [
+		/*"broadcast-settings-update",
+		"channel-bounty-board-events.cta",
+		"channel-drop-events",
+		// Gifted subs
+		"channel-sub-gifts-v1",
+		"charity-campaign-donation-events-v1",
+		"community-boost-events-v1",*/
+		// Rewards
+		"community-points-channel-v1",
+		// Goal updates
+		/*"creator-goals-events-v1",
+		"extension-control",
+		"guest-star-channel-v1",
+		"hype-train-events-v1",
+		"pinned-chat-updates-v1",
+		"polls",
+		"predictions-channel-v1",
+		"pv-watch-party-events",
+		"radio-events-v1",
+		"raid",
+		"request-to-join-channel-v1",
+		"shoutout",
+		"sponsorships-v1",*/
+		// Rich chat (images/clips) (we can't display these)
+		//"stream-chat-room-v1",
+		// Current view count
+		"video-playback-by-id",
+	] {
+		let _ = web_socket_stream
+			.send(protocol::Message::Text(
+				// rustfmt wants to make this one line, which is harder to read
+				#[rustfmt::skip]
+                [
+                    "{\
+                        \"type\":\"LISTEN\",\
+                        \"data\":{\
+                            \"topics\":[\
+                                \"", topic, ".", &id, "\"\
+                            ]\
+                        }\
+                    }"
+                ].concat().to_owned(),
+			))
+			.await;
+	}
 
 	// Input (but async)
 	let mut event_stream = EventStream::new();
@@ -501,6 +698,15 @@ pub async fn play_stream<B: Backend>(terminal: &mut Terminal<B>, login: &str, qu
 
 	// Items in the log
 	let mut log = VecDeque::with_capacity(height);
+
+	// View count
+	let mut viewers = Paragraph::new(Span {
+		content: "👤".into(),
+		style: Style {
+			fg: Some(Color::Red),
+			..Style::default()
+		},
+	});
 
 	// Run until streamlink dies
 	//while let Ok(None) = child.try_wait() {
@@ -528,7 +734,7 @@ pub async fn play_stream<B: Backend>(terminal: &mut Terminal<B>, login: &str, qu
 			),
 			// Read new message in chat
 			next = client_stream.next() => if let Some(Ok(message)) = next {
-				handle_rfc_command(
+				handle_irc_command(
 					message,
 					&mut chat,
 					&mut info,
@@ -539,24 +745,44 @@ pub async fn play_stream<B: Backend>(terminal: &mut Terminal<B>, login: &str, qu
 				// The connection failed, let's try again
 				add_to_queue(
 					&mut log,
-					ListItem::new("RFC connection failed, retrying"),
+					ListItem::new("IRC connection failed, retrying"),
 					terminal
 						.size()
 						.expect("Should be able to get terminal dimensions")
 						.height - 3
 				);
 
-				client_stream = connect_rfc_client(login).await;
+				client_stream = connect_irc_client(login).await;
 			},
+			// Read from websocket
+			Some(Ok(protocol::Message::Text(text))) = web_socket_stream.next() => {
+				handle_websocket_message(
+					text,
+					terminal
+						.size()
+						.expect("Should be able to get terminal dimensions"),
+					&mut chat,
+					&mut log,
+					&mut viewers
+				);
+			}
+			// Ping twitch websocket every 4 minutes
+			_ = ping_interval.tick() => {
+				// Twitch's websocket doesn't work with actual pings,
+				// it has to be a message saying it
+				let _ = web_socket_stream.send(protocol::Message::Text(
+					r#"{"type":"PING"}"#.to_owned()
+				)).await;
+			}
 			// Read keyboard input
 			Some(Ok(event)) = event_stream.next() => {
 				match event {
 					Event::Key(key) => match key.code {
 						// Quit
 						KeyCode::Char('Q' | 'q') => break,
-						// Select next tab to the right
+						// Select next tab to the left
 						KeyCode::Left => tab = tab.saturating_sub(1),
-						// Select next tab  to the right
+						// Select next tab to the right
 						KeyCode::Right => if tab != 2 { tab += 1 },
 						_ => ()
 					},
@@ -596,7 +822,18 @@ pub async fn play_stream<B: Backend>(terminal: &mut Terminal<B>, login: &str, qu
 				},
 			);
 
-			let _ = frame.render_widget(
+			frame.render_widget_reusable(
+				&viewers,
+				Rect {
+					// Enough space for 7 digits + 2 for symbol + 2 for spacing
+					x: frame.size().width - 11,
+					y: 1,
+					width: 9,
+					height: 1,
+				},
+			);
+
+			frame.render_widget(
 				List::new(
 					// Which list should we render
 					match tab {

@@ -13,7 +13,7 @@ pub const PLAYER: &[&str] = &["ffplay", "-autoexit"];
 /// The first item can be changed at runtime with +/-.
 /// Case-insensitive (lower case) for clips and VODs.
 /// If there are no items it will default to `best`.
-/// Should be one of: audio_only, worst, 160p, 360p, 480p, 720p, 720p60, 1080p60, best
+/// Should be one of: audio_only, worst, 160p, 360p, 480p, 720p, 720p60, 936p60, 1080p60, best
 pub const QUALITY: &[&str] = &["best"];
 
 /// HTTP headers for requests.

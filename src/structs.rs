@@ -289,6 +289,7 @@ struct UserRoles {
 
 #[derive(Deserialize, Debug)]
 pub struct User {
+	id: String,
 	login: String,
 	displayName: String,
 	primaryColorHex: Option<String>,
@@ -296,9 +297,8 @@ pub struct User {
 	roles: Option<UserRoles>,
 	// Ignore `id`, `profileImageURL`, `largeProfileImageURL` and `__typename`
 }
-
 impl User {
-	// Get a [`ratatui::Style`] with the user's colour as forground.
+	/// Get a [`ratatui::Style`] with the user's colour as forground.
 	fn style(&self) -> Style {
 		Style {
 			fg: self
@@ -306,6 +306,27 @@ impl User {
 				.as_ref()
 				.map(|primary_colour_hex| parse_colour(&primary_colour_hex)),
 			..Style::default()
+		}
+	}
+
+	/// Get a `Node::Stream` object from a `User`.
+	fn as_node(&self) -> Node {
+		// Doesn't need most of this information, just `broadcaster.login`
+		Node::Stream {
+			broadcaster: User {
+				id: self.id.clone(),
+				login: self.login.clone(),
+				displayName: String::new(),
+				primaryColorHex: None,
+				broadcastSettings: Some(BroadcastSettings {
+					title: String::new(),
+				}),
+				roles: None,
+			},
+			game: None,
+			freeformTags: Vec::new(),
+			viewersCount: 0,
+			createdAt: None,
 		}
 	}
 }
@@ -549,12 +570,12 @@ impl Node {
 			}
 			Node::Game(Game { name, .. }) => Some(name.clone()),
 			Node::Stream {
-				broadcaster: User { login, .. },
+				broadcaster: User { id, login, .. },
 				..
 			} => {
 				// Load chat UI if enabled
 				#[cfg(feature = "chat")]
-				crate::irc::play_stream(terminal, login, qualities);
+				crate::irc::play_stream(terminal, easy, login, &id, qualities);
 
 				// Otherwise, just run the stream
 				#[cfg(not(feature = "chat"))]
@@ -676,27 +697,6 @@ impl Node {
 				None
 			}
 			Node::None => None,
-		}
-	}
-}
-impl Into<Node> for String {
-	/// Get a `Node::Stream` object from a username string.
-	fn into(self) -> Node {
-		// Doesn't need most of this information, just `broadcaster.login`
-		Node::Stream {
-			broadcaster: User {
-				login: self,
-				displayName: String::new(),
-				primaryColorHex: None,
-				broadcastSettings: Some(BroadcastSettings {
-					title: String::new(),
-				}),
-				roles: None,
-			},
-			game: None,
-			freeformTags: Vec::new(),
-			viewersCount: 0,
-			createdAt: None,
 		}
 	}
 }
@@ -841,6 +841,7 @@ struct SearchForEdgeStream {
 /// [`User`] returned by a search
 #[derive(Deserialize, Debug)]
 struct SearchForEdgeUser {
+	id: String,
 	broadcastSettings: BroadcastSettings,
 	displayName: String,
 	followers: FollowerConnection,
@@ -909,7 +910,22 @@ impl SearchForEdgeUser {
 				]);
 
 				// Their current stream
-				self.login.into()
+				Node::Stream {
+					broadcaster: User {
+						id: self.id,
+						login: self.login,
+						displayName: String::new(),
+						primaryColorHex: None,
+						broadcastSettings: Some(BroadcastSettings {
+							title: String::new(),
+						}),
+						roles: None,
+					},
+					game: None,
+					freeformTags: Vec::new(),
+					viewersCount: 0,
+					createdAt: None,
+				}
 			} else if self.latestVideo.edges.len() == 0 {
 				// They have streamed before, but we didn't get a VOD
 				Node::None
@@ -1001,6 +1017,7 @@ impl SearchForEdgeUser {
 					clipTitle: String::new(),
 					clipViewCount: 0,
 					curator: User {
+						id: String::new(),
 						login: String::new(),
 						displayName: String::new(),
 						primaryColorHex: None,
@@ -1015,6 +1032,7 @@ impl SearchForEdgeUser {
 						originalReleaseDate: None,
 					},
 					broadcaster: User {
+						id: String::new(),
 						login: String::new(),
 						displayName: String::new(),
 						primaryColorHex: None,
@@ -1183,11 +1201,13 @@ impl TwitchResponse {
 									channel
 										.user
 										.broadcastSettings
+										.as_ref()
 										.expect("Should be a broadcast")
 										.title
+										.clone()
 										.into(),
 									"".into(),
-									channel.user.displayName.into(),
+									channel.user.displayName.clone().into(),
 									["Viewers: ", &channel.content.viewersCount.to_string()]
 										.concat()
 										.into(),
@@ -1205,7 +1225,7 @@ impl TwitchResponse {
 							})
 							.style(style)
 							.wrap(Wrap { trim: false }),
-							channel.user.login.into(),
+							channel.user.as_node(),
 						));
 					}
 				}
@@ -1434,7 +1454,7 @@ impl TwitchResponse {
 							lines: vec![
 								edge.node.title.into(),
 								"".into(),
-								edge.node.broadcaster.displayName.into(),
+								edge.node.broadcaster.displayName.clone().into(),
 								["Viewers: ", &edge.node.viewersCount.to_string()]
 									.concat()
 									.into(),
@@ -1463,7 +1483,7 @@ impl TwitchResponse {
 						})
 						.style(style)
 						.wrap(Wrap { trim: false }),
-						edge.node.broadcaster.login.into(),
+						edge.node.broadcaster.as_node(),
 					));
 				}
 			}
@@ -1631,9 +1651,10 @@ impl TwitchResponse {
 
 					for edge in relatedLiveChannels.edges {
 						let style = edge.item.stream.broadcaster.style();
+						let node = edge.item.stream.broadcaster.as_node();
 
 						items_to_add[relatedLiveChannels.score - 1].0.push(Span {
-							content: edge.item.stream.broadcaster.displayName.into(),
+							content: edge.item.stream.broadcaster.displayName.clone().into(),
 							style,
 						});
 
@@ -1664,7 +1685,7 @@ impl TwitchResponse {
 							Paragraph::new(lines)
 								.style(style)
 								.wrap(Wrap { trim: false }),
-							edge.item.stream.broadcaster.login.into(),
+							node,
 						));
 					}
 				}

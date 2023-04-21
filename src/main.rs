@@ -2,7 +2,7 @@
 
 #![feature(exclusive_range_pattern)]
 #![feature(is_some_and)]
-#![feature(let_chains)]
+#![feature(stmt_expr_attributes)]
 
 use std::io::stdout;
 
@@ -191,11 +191,11 @@ fn main() {
 
 	let _ = execute!(stdout(), EnterAlternateScreen);
 
-	// Clear screen
-	let _ = terminal.clear();
-
 	// Fetch data
 	let (mut list, mut info_vec) = page.request(&mut easy);
+
+	// Clear screen
+	let _ = terminal.clear();
 
 	// Should we redraw this frame?
 	let mut redraw = true;
