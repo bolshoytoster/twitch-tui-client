@@ -86,7 +86,7 @@ fn handle_irc_command(
 				chat,
 				ListItem::new(
 					[
-						&*response.last().expect("We already know there are elements"),
+						response.last().expect("We already know there are elements"),
 						&*message
 							.tags
 							.expect("CLEARCHAT should have tags")
@@ -190,12 +190,11 @@ fn handle_irc_command(
 						style: Style {
 							fg: tags
 								.find(|x| x.0 == "color")
-								.map(|x| {
+								.and_then(|x| {
 									x.1.filter(|x| !x.is_empty())
 										.as_ref()
 										.map(|x| parse_colour(&x[1..]))
-								})
-								.flatten(),
+								}),
 							..Style::default()
 						},
 						content: tags
@@ -443,7 +442,7 @@ fn handle_irc_command(
 			for line in &wrapped_text[1..] {
 				add_to_queue(
 					chat,
-					ListItem::new([&*" ".repeat(meta_width), &*line].concat()),
+					ListItem::new([&*" ".repeat(meta_width), line].concat()),
 					terminal_rect.height - 3,
 				);
 			}
@@ -522,7 +521,7 @@ fn handle_websocket_message(
 		data: Some(mut data),
 	}) = from_slice::<WebsocketMessage>(unsafe { text.as_bytes_mut() })
 	{
-		let (topic, channel_id) = data.topic.split_once('.').expect("Topic should have a dot");
+		let (topic, _channel_id) = data.topic.split_once('.').expect("Topic should have a dot");
 
 		let message = unsafe { data.message.as_bytes_mut() };
 
@@ -583,7 +582,7 @@ fn handle_websocket_message(
 #[tokio::main]
 pub async fn play_stream<B: Backend>(
 	terminal: &mut Terminal<B>,
-	easy: &mut Easy,
+	_easy: &mut Easy,
 	login: &str,
 	id: &String,
 	qualities: &[&str],
@@ -668,7 +667,7 @@ pub async fn play_stream<B: Backend>(
                         \"type\":\"LISTEN\",\
                         \"data\":{\
                             \"topics\":[\
-                                \"", topic, ".", &id, "\"\
+                                \"", topic, ".", id, "\"\
                             ]\
                         }\
                     }"

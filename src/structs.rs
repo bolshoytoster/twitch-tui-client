@@ -48,7 +48,7 @@ fn header<'a, T: Into<Cow<'a, str>>>(content: T) -> Span<'a> {
 }
 
 /// Formats a date according to config.
-fn format_date(string: &String) -> String {
+fn format_date(string: &str) -> String {
 	if let Ok(dt) = string.parse::<DateTime<Utc>>() {
 		if let Some(fmt) = DATE_FORMAT {
 			// Use user's format
@@ -304,7 +304,7 @@ impl User {
 			fg: self
 				.primaryColorHex
 				.as_ref()
-				.map(|primary_colour_hex| parse_colour(&primary_colour_hex)),
+				.map(|primary_colour_hex| parse_colour(primary_colour_hex)),
 			..Style::default()
 		}
 	}
@@ -555,12 +555,17 @@ impl Node {
 								.clip
 								.playbackAccessToken
 								.value
-								.replace("%", "%25"),
+								.replace('%', "%25"),
 						]
 						.concat(),
 					)
 					.spawn()
-					.expect(&["Should be able to spawn PLAYER (", &PLAYER.join(" "), ")"].concat())
+					.unwrap_or_else(|_| {
+						panic!(
+							"{}",
+							["Should be able to spawn PLAYER (", &PLAYER.join(" "), ")"].concat()
+						)
+					})
 					.wait();
 
 				let _ = enable_raw_mode();
@@ -575,7 +580,7 @@ impl Node {
 			} => {
 				// Load chat UI if enabled
 				#[cfg(feature = "chat")]
-				crate::irc::play_stream(terminal, easy, login, &id, qualities);
+				crate::irc::play_stream(terminal, easy, login, id, qualities);
 
 				// Otherwise, just run the stream
 				#[cfg(not(feature = "chat"))]
@@ -687,7 +692,12 @@ impl Node {
 							.expect("Should be able to get a VOD URL"),
 					)
 					.spawn()
-					.expect(&["Should be able to spawn PLAYER (", &PLAYER.join(" "), ")"].concat())
+					.unwrap_or_else(|_| {
+						panic!(
+							"{}",
+							["Should be able to spawn PLAYER (", &PLAYER.join(" "), ")"].concat()
+						)
+					})
 					.wait();
 
 				let _ = enable_raw_mode();
@@ -873,7 +883,7 @@ impl SearchForEdgeUser {
 					.lastBroadcast
 					.startedAt
 					.as_ref()
-					.map_or("Never".to_owned(), |x| format_date(&x)),
+					.map_or("Never".to_owned(), |x| format_date(x)),
 			]
 			.concat()
 			.into(),
@@ -926,7 +936,7 @@ impl SearchForEdgeUser {
 					viewersCount: 0,
 					createdAt: None,
 				}
-			} else if self.latestVideo.edges.len() == 0 {
+			} else if self.latestVideo.edges.is_empty() {
 				// They have streamed before, but we didn't get a VOD
 				Node::None
 			} else {
@@ -969,7 +979,7 @@ impl SearchForEdgeUser {
 				[
 					"Ends: ",
 					&if let Some(end_at) = &next_segment.endAt {
-						format_date(&end_at)
+						format_date(end_at)
 					} else {
 						"tbd".to_owned()
 					},
@@ -981,7 +991,7 @@ impl SearchForEdgeUser {
 					&next_segment
 						.categories
 						.into_iter()
-						.map(|game| game.name.clone())
+						.map(|game| game.name)
 						.collect::<Vec<String>>()
 						.join(", "),
 				]
@@ -1172,7 +1182,7 @@ pub struct TwitchResponse {
 
 impl TwitchResponse {
 	/// Converts the data to a main [`List`] widget and a [`Vec`] of data widgets.
-	pub fn to_widgets<'a>(self) -> (List<'a>, Vec<(Paragraph<'a>, Node)>) {
+	pub fn into_widgets<'a>(self) -> (List<'a>, Vec<(Paragraph<'a>, Node)>) {
 		let mut titles = Vec::new();
 		let mut info = Vec::new();
 
@@ -1317,21 +1327,21 @@ impl TwitchResponse {
 									clipTitle.clone().into(),
 									"".into(),
 									["Views: ", &clipViewCount.to_string()].concat().into(),
-									["Curator: ", &curator_display_name].concat().into(),
+									["Curator: ", curator_display_name].concat().into(),
 									[
 										"Game: ",
 										&game_display_name.clone().unwrap_or(game_name.clone()),
 									]
 									.concat()
 									.into(),
-									["Broadcaster: ", &broadcaster_display_name].concat().into(),
+									["Broadcaster: ", broadcaster_display_name].concat().into(),
 									["Clip created: ", &format_date(clipCreatedAt)]
 										.concat()
 										.into(),
 									["Duration: ", &durationSeconds.to_string(), "s"]
 										.concat()
 										.into(),
-									["Language: ", &language].concat().into(),
+									["Language: ", language].concat().into(),
 								],
 							),
 							Node::Game(Game {
@@ -1415,7 +1425,7 @@ impl TwitchResponse {
 									| Game { name, .. },
 								) = game
 								{
-									infos.push(["Game: ", &name].concat().into());
+									infos.push(["Game: ", name].concat().into());
 								}
 
 								if let Some(created_at) = createdAt {
@@ -1507,7 +1517,7 @@ impl TwitchResponse {
 					(Vec::new(), Vec::new()),
 				];
 
-				if channels.edges.len() != 0 {
+				if !channels.edges.is_empty() {
 					items_to_add[channels.score - 1].0.push(header("Channels"));
 
 					items_to_add[channels.score - 1].1.push((
@@ -1522,7 +1532,7 @@ impl TwitchResponse {
 							.add_items_to(&mut items_to_add[channels.score - 1]);
 					}
 				}
-				if channelsWithTag.edges.len() != 0 {
+				if !channelsWithTag.edges.is_empty() {
 					items_to_add[channelsWithTag.score - 1]
 						.0
 						.push(header("Live channels with tag"));
@@ -1539,7 +1549,7 @@ impl TwitchResponse {
 							.add_items_to(&mut items_to_add[channelsWithTag.score - 1]);
 					}
 				}
-				if games.edges.len() != 0 {
+				if !games.edges.is_empty() {
 					items_to_add[games.score - 1].0.push(header("Categories"));
 
 					items_to_add[games.score - 1].1.push((
@@ -1590,7 +1600,7 @@ impl TwitchResponse {
 						));
 					}
 				}
-				if videos.edges.len() != 0 {
+				if !videos.edges.is_empty() {
 					items_to_add[videos.score - 1].0.push(header("Past videos"));
 
 					items_to_add[videos.score - 1].1.push((
@@ -1640,7 +1650,7 @@ impl TwitchResponse {
 					}
 				}
 
-				if relatedLiveChannels.edges.len() != 0 {
+				if !relatedLiveChannels.edges.is_empty() {
 					items_to_add[relatedLiveChannels.score - 1]
 						.0
 						.push(header("People searching also watch:"));
@@ -1675,7 +1685,7 @@ impl TwitchResponse {
 
 						if let Some(roles) = edge.item.stream.broadcaster.roles {
 							lines.push(
-								["Partner: ", &if roles.isPartner { "Yes" } else { "No" }]
+								["Partner: ", if roles.isPartner { "Yes" } else { "No" }]
 									.concat()
 									.into(),
 							);

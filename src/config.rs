@@ -1,5 +1,7 @@
 // For some enum variants
 #![allow(dead_code)]
+// Some of the `Default`s invoke this
+#![allow(clippy::derivable_impls)]
 
 use ratatui::layout::Alignment;
 use ratatui::widgets::BorderType;
@@ -99,9 +101,9 @@ enum PersonalSectionType {
 	RecommendedSection,
 	SimilarSection,
 }
-impl Into<&str> for PersonalSectionType {
-	fn into(self) -> &'static str {
-		match self {
+impl From<PersonalSectionType> for &str {
+	fn from(val: PersonalSectionType) -> Self {
+		match val {
 			PersonalSectionType::RecommendedSection => "RECOMMENDED_SECTION",
 			PersonalSectionType::SimilarSection => "SIMILAR_SECTION",
 		}
@@ -173,9 +175,9 @@ enum StreamSort {
 	Relevance,
 	ViewerCount,
 }
-impl Into<&str> for StreamSort {
-	fn into(self) -> &'static str {
-		match self {
+impl From<StreamSort> for &str {
+	fn from(val: StreamSort) -> Self {
+		match val {
 			StreamSort::Relevance => "RELEVANCE",
 			StreamSort::ViewerCount => "VIEWER_COUNT",
 		}
@@ -231,9 +233,9 @@ enum SearchIndex {
 	// Past videos
 	Vod,
 }
-impl Into<&str> for SearchIndex {
-	fn into(self) -> &'static str {
-		match self {
+impl From<SearchIndex> for &str {
+	fn from(val: SearchIndex) -> Self {
+		match val {
 			SearchIndex::ChannelWithTag => "CHANNEL_WITH_TAG",
 			SearchIndex::Channel => "CHANNEL",
 			SearchIndex::Game => "GAME",

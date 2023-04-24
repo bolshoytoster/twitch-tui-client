@@ -51,7 +51,7 @@ pub fn format_seconds(seconds: i64) -> String {
 
 /// Parses a colour string
 pub fn parse_colour(string: &str) -> Color {
-	let parsed = i32::from_str_radix(&string, 16).expect("Server sent an invalid hex colour");
+	let parsed = i32::from_str_radix(string, 16).expect("Server sent an invalid hex colour");
 
 	Color::Rgb((parsed >> 16) as u8, (parsed >> 8) as u8, parsed as u8)
 }

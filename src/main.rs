@@ -104,7 +104,7 @@ impl Page {
 			),
 		})
 		.expect("Response should be valid JSON")
-		.to_widgets()
+		.into_widgets()
 	}
 
 	/// Selects the given item and returns `self`
@@ -143,7 +143,7 @@ impl ToString for Page {
 
 fn main() {
 	// Default to ["best"]
-	let mut qualities = if QUALITY.len() == 0 {
+	let mut qualities = if QUALITY.is_empty() {
 		vec!["best"]
 	} else {
 		let mut vec = Vec::with_capacity(QUALITY.len());
@@ -312,7 +312,7 @@ fn main() {
 					if let Some(name) = info_vec
 						[list_state.selected().expect("Something should be selected")]
 					.1
-					.select(&mut terminal, &mut easy, &*qualities)
+					.select(&mut terminal, &mut easy, &qualities)
 					{
 						// If we selected a category
 
