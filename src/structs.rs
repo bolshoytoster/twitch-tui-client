@@ -115,7 +115,7 @@ pub struct PersonalSectionsInput {
 	pub contextChannelName: Option<&'static str>,
 }
 
-pub trait Variables: Default {
+pub trait Variables {
 	const SHA256HASH: &'static str;
 }
 
@@ -238,11 +238,11 @@ pub struct RequestExtensions {
 
 /// POST data for API calls.
 #[derive(Serialize)]
-pub struct TwitchRequest<T: Variables> {
+pub struct TwitchRequest<T: Serialize> {
 	pub variables: T,
 	pub extensions: RequestExtensions,
 }
-impl<T: Variables> Default for TwitchRequest<T> {
+impl<T: Serialize + Variables + Default> Default for TwitchRequest<T> {
 	fn default() -> Self {
 		Self {
 			variables: T::default(),

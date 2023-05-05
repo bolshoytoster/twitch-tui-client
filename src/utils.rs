@@ -24,7 +24,7 @@ pub fn request<J: Serialize + ?Sized>(easy: &mut Easy, json: &J) -> Vec<u8> {
 			Ok(slice.len())
 		});
 
-		transfer.perform().unwrap();
+		let _ = transfer.perform();
 	}
 
 	vec

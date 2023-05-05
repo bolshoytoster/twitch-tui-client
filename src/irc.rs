@@ -188,13 +188,11 @@ fn handle_irc_command(
 					chat,
 					ListItem::new(Span {
 						style: Style {
-							fg: tags
-								.find(|x| x.0 == "color")
-								.and_then(|x| {
-									x.1.filter(|x| !x.is_empty())
-										.as_ref()
-										.map(|x| parse_colour(&x[1..]))
-								}),
+							fg: tags.find(|x| x.0 == "color").and_then(|x| {
+								x.1.filter(|x| !x.is_empty())
+									.as_ref()
+									.map(|x| parse_colour(&x[1..]))
+							}),
 							..Style::default()
 						},
 						content: tags
@@ -478,9 +476,15 @@ struct Redemption {
 
 /// Data for community points event
 #[derive(Deserialize)]
-struct CommunityPointsChannelV1Data {
-	redemption: Redemption,
-	// Ignore `timestamp`
+#[serde(untagged)]
+enum CommunityPointsChannelV1Data {
+	Redemption {
+		redemption: Redemption,
+		// Ignore `timestamp`
+	},
+	UpdatedReward {
+		updated_reward: Reward,
+	},
 }
 
 /// An event to do with community points, i.e. redeeming a reward
@@ -527,26 +531,47 @@ fn handle_websocket_message(
 
 		match topic {
 			"community-points-channel-v1" => {
-				let redemption = from_slice::<CommunityPointsChannelV1>(message)
-					.expect("Websocket message should be valid JSON")
-					.data
-					.redemption;
+				// Reward, use a different message for redeemed/updated
+				let (content, background_color) =
+					match from_slice::<CommunityPointsChannelV1>(message)
+						.expect(&format!(
+							"Websocket message should be valid JSON: {:?}",
+							std::str::from_utf8(message)
+						))
+						.data
+					{
+						CommunityPointsChannelV1Data::Redemption { redemption } => (
+							[
+								&redemption.user.display_name,
+								" redeemed ",
+								&redemption.reward.title,
+								" (",
+								&redemption.reward.cost.to_string(),
+								")",
+							]
+							.concat()
+							.into(),
+							redemption.reward.background_color,
+						),
+						CommunityPointsChannelV1Data::UpdatedReward { updated_reward } => (
+							[
+								&updated_reward.title,
+								" updated (",
+								&updated_reward.cost.to_string(),
+								")",
+							]
+							.concat()
+							.into(),
+							updated_reward.background_color,
+						),
+					};
 
 				add_to_queue(
 					chat,
 					ListItem::new(Span {
-						content: [
-							&redemption.user.display_name,
-							" redeemed ",
-							&redemption.reward.title,
-							" (",
-							&redemption.reward.cost.to_string(),
-							")",
-						]
-						.concat()
-						.into(),
+						content,
 						style: Style {
-							fg: Some(parse_colour(&redemption.reward.background_color[1..])),
+							fg: Some(parse_colour(&background_color[1..])),
 							..Style::default()
 						},
 					}),

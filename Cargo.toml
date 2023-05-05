@@ -2,8 +2,17 @@
 name = "twitch-curses"
 version = "0.1.0"
 edition = "2021"
+default-run = "twitch-tui"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[[bin]]
+name = "twitch-tui"
+path = "src/main.rs"
+
+[[bin]]
+name = "online-check"
+path = "src/online-check.rs"
 
 [dependencies]
 # TUI library (my fork)
