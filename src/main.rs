@@ -1,7 +1,6 @@
 //! A twitch client. lol
 
 #![feature(exclusive_range_pattern)]
-#![feature(is_some_and)]
 #![feature(stmt_expr_attributes)]
 
 use std::io::stdout;
@@ -54,13 +53,22 @@ enum Page {
 impl Page {
 	/// Sends this page's request and returns the ratatui widgets.
 	fn request<'a>(&self, easy: &mut Easy) -> (List<'a>, Vec<(Paragraph<'a>, Node)>) {
-		from_slice::<TwitchResponse>(&mut match self {
+		match self {
 			Page::Home { .. } => match HOME_PAGE {
-				HomePage::PersonalSection => {
-					request(easy, &TwitchRequest::<PersonalSectionsVariables>::default())
-				}
-				HomePage::Shelves => request(easy, &TwitchRequest::<ShelvesVariables>::default()),
-				HomePage::Game(name) => request(
+				HomePage::PersonalSection => from_slice::<TwitchResponse<PersonalSectionData>>(
+					&mut request(easy, &TwitchRequest::<PersonalSectionsVariables>::default()),
+				)
+				.expect("Response should be valid JSON")
+				.data
+				.into_widgets(),
+				HomePage::Shelves => from_slice::<TwitchResponse<ShelvesData>>(&mut request(
+					easy,
+					&TwitchRequest::<ShelvesVariables>::default(),
+				))
+				.expect("Response should be valid JSON")
+				.data
+				.into_widgets(),
+				HomePage::Game(name) => from_slice::<TwitchResponse<GameData>>(&mut request(
 					easy,
 					&TwitchRequest {
 						variables: DirectoryPage_GameVariables {
@@ -69,20 +77,27 @@ impl Page {
 						},
 						..TwitchRequest::default()
 					},
-				),
-				HomePage::Search(query) => request(
-					easy,
-					&TwitchRequest {
-						variables: SearchResultsVariables {
-							query: query.to_owned(),
-							..TwitchRequest::default().variables
+				))
+				.expect("Response should be valid JSON")
+				.data
+				.into_widgets(),
+				HomePage::Search(query) => {
+					from_slice::<TwitchResponse<SearchForData>>(&mut request(
+						easy,
+						&TwitchRequest {
+							variables: SearchResultsVariables {
+								query: query.to_owned(),
+								..TwitchRequest::default().variables
+							},
+							..TwitchRequest::default()
 						},
-						..TwitchRequest::default()
-					},
-				),
+					))
+					.expect("Response should be valid JSON")
+					.data
+					.into_widgets()
+				}
 			},
-
-			Page::Game { name, .. } => request(
+			Page::Game { name, .. } => from_slice::<TwitchResponse<GameData>>(&mut request(
 				easy,
 				&TwitchRequest {
 					variables: DirectoryPage_GameVariables {
@@ -91,20 +106,26 @@ impl Page {
 					},
 					..TwitchRequest::default()
 				},
-			),
-			Page::Search { query, .. } => request(
-				easy,
-				&TwitchRequest {
-					variables: SearchResultsVariables {
-						query: query.clone(),
-						..TwitchRequest::default().variables
+			))
+			.expect("Response should be valid JSON")
+			.data
+			.into_widgets(),
+			Page::Search { query, .. } => {
+				from_slice::<TwitchResponse<SearchForData>>(&mut request(
+					easy,
+					&TwitchRequest {
+						variables: SearchResultsVariables {
+							query: query.clone(),
+							..TwitchRequest::default().variables
+						},
+						..TwitchRequest::default()
 					},
-					..TwitchRequest::default()
-				},
-			),
-		})
-		.expect("Response should be valid JSON")
-		.into_widgets()
+				))
+				.expect("Response should be valid JSON")
+				.data
+				.into_widgets()
+			}
+		}
 	}
 
 	/// Selects the given item and returns `self`

@@ -1156,560 +1156,67 @@ struct SearchFor {
 	// Ignore `__typename`
 }
 
-#[derive(Deserialize, Debug)]
-#[serde(untagged)]
-enum Data {
-	PersonalSection {
-		personalSections: Vec<PersonalSection>,
-	},
-	Shelves {
-		shelves: ShelfConnection,
-	},
-	Game {
-		game: Category,
-	},
-	SearchFor {
-		searchFor: SearchFor,
-	},
-}
-
-/// Response from the `PersonalSections` API call.
-#[derive(Deserialize, Debug)]
-pub struct TwitchResponse {
-	data: Data,
-	// Ignore `extensions`
-}
-
-impl TwitchResponse {
+pub trait Data {
 	/// Converts the data to a main [`List`] widget and a [`Vec`] of data widgets.
-	pub fn into_widgets<'a>(self) -> (List<'a>, Vec<(Paragraph<'a>, Node)>) {
+	fn into_widgets<'a>(self) -> (List<'a>, Vec<(Paragraph<'a>, Node)>);
+}
+
+#[derive(Deserialize)]
+pub struct PersonalSectionData {
+	personalSections: Vec<PersonalSection>,
+}
+impl Data for PersonalSectionData {
+	fn into_widgets<'a>(self) -> (List<'a>, Vec<(Paragraph<'a>, Node)>) {
 		let mut titles = Vec::new();
 		let mut info = Vec::new();
 
-		match self.data {
-			Data::PersonalSection { personalSections } => {
-				for personal_section in personalSections {
-					// Title
-					titles.push(ListItem::new(spaced(header(
-						personal_section.title.localizedFallback,
-					))));
+		for personal_section in self.personalSections {
+			// Title
+			titles.push(ListItem::new(spaced(header(
+				personal_section.title.localizedFallback,
+			))));
 
-					// No info for title
-					info.push((Paragraph::new(Text { lines: Vec::new() }), Node::None));
+			// No info for title
+			info.push((Paragraph::new(Text { lines: Vec::new() }), Node::None));
 
-					// Channels
-					for channel in personal_section.items.into_iter() {
-						// Item foreground colour
-						let style = channel.user.style();
+			// Channels
+			for channel in personal_section.items.into_iter() {
+				// Item foreground colour
+				let style = channel.user.style();
 
-						titles.push(
-							ListItem::new(spaced(channel.user.displayName.clone())).style(style),
-						);
-						info.push((
-							Paragraph::new(Text {
-								lines: vec![
-									channel
-										.user
-										.broadcastSettings
-										.as_ref()
-										.expect("Should be a broadcast")
-										.title
-										.clone()
-										.into(),
-									"".into(),
-									channel.user.displayName.clone().into(),
-									["Viewers: ", &channel.content.viewersCount.to_string()]
-										.concat()
-										.into(),
-									[
-										"Game: ",
-										&channel
-											.content
-											.game
-											.displayName
-											.unwrap_or(channel.content.game.name),
-									]
-									.concat()
-									.into(),
-								],
-							})
-							.style(style)
-							.wrap(Wrap { trim: false }),
-							channel.user.as_node(),
-						));
-					}
-				}
-			}
-			Data::Shelves {
-				shelves: ShelfConnection { edges },
-			} => {
-				for edge in edges {
-					// Gategory title
-					// Use fallback title if any tokens are null
-					titles.push(
-						if edge
-							.node
-							.title
-							.localizedTitleTokens
-							.iter()
-							.any(|x| matches!(x.node, TextToken::None))
-						{
-							// Fallback string
-							ListItem::new(spaced(header(edge.node.title.fallbackLocalizedTitle)))
-						} else {
-							ListItem::new(spaced(Spans(
-								edge.node
-									.title
-									.localizedTitleTokens
-									.into_iter()
-									.map(|token| {
-										match token.node {
-											TextToken::BrowsableCollection {
-												collectionName:
-													BrowsableCollectionTitle {
-														fallbackLocalizedTitle,
-													},
-											} => header(fallbackLocalizedTitle),
-											TextToken::Game(Game {
-												displayName, name, ..
-											}) => header(displayName.unwrap_or(name)),
-											TextToken::TextToken { text, hasEmphasis } => Span {
-												content: text.into(),
-												style: Style {
-													add_modifier: if hasEmphasis {
-														Modifier::BOLD
-													} else {
-														Modifier::empty()
-													} | Modifier::UNDERLINED,
-													..Style::default()
-												},
-											},
-											// We already filtered this out
-											TextToken::None => unreachable!(),
-										}
-									})
-									.collect::<Vec<Span>>(),
-							)))
-						},
-					);
-
-					info.push((Paragraph::new(Text { lines: Vec::new() }), Node::None));
-
-					for edge in edge.node.content.edges {
-						// Category items
-						let (title, lines) = match &edge.node {
-							Node::Clip {
-								clipTitle,
-								clipViewCount,
-								curator:
-									User {
-										displayName: curator_display_name,
-										..
-									},
-								game:
-									Game {
-										displayName: game_display_name,
-										name: game_name,
-										..
-									},
-								broadcaster:
-									User {
-										displayName: broadcaster_display_name,
-										..
-									},
-								clipCreatedAt,
-								durationSeconds,
-								language,
-								..
-							} => (
-								clipTitle.clone(),
-								vec![
-									clipTitle.clone().into(),
-									"".into(),
-									["Views: ", &clipViewCount.to_string()].concat().into(),
-									["Curator: ", curator_display_name].concat().into(),
-									[
-										"Game: ",
-										&game_display_name.clone().unwrap_or(game_name.clone()),
-									]
-									.concat()
-									.into(),
-									["Broadcaster: ", broadcaster_display_name].concat().into(),
-									["Clip created: ", &format_date(clipCreatedAt)]
-										.concat()
-										.into(),
-									["Duration: ", &durationSeconds.to_string(), "s"]
-										.concat()
-										.into(),
-									["Language: ", language].concat().into(),
-								],
-							),
-							Node::Game(Game {
-								viewersCount,
-								displayName,
-								name,
-								gameTags,
-								originalReleaseDate,
-								..
-							}) => {
-								let mut lines = vec![
-									displayName.clone().unwrap_or(name.clone()).into(),
-									"".into(),
-								];
-
-								if let Some(viewers_count) = viewersCount {
-									lines.push(
-										["Viewers: ", &viewers_count.to_string()].concat().into(),
-									);
-								}
-
-								if let Some(game_tags) = gameTags {
-									lines.push(
-										[
-											"Tags: ",
-											&game_tags
-												.iter()
-												.map(|tag| tag.localizedName.clone())
-												.collect::<Vec<String>>()
-												.join(", "),
-										]
-										.concat()
-										.into(),
-									)
-								}
-
-								if let Some(original_release_date) = originalReleaseDate {
-									lines.push(
-										["Released: ", &format_date(original_release_date)]
-											.concat()
-											.into(),
-									)
-								}
-
-								(displayName.clone().unwrap_or(name.clone()).clone(), lines)
-							}
-							Node::Stream {
-								broadcaster:
-									User {
-										displayName: broadcaster_display_name,
-										broadcastSettings: Some(BroadcastSettings { title }),
-										..
-									},
-								game,
-								freeformTags,
-								viewersCount,
-								createdAt,
-							} => {
-								let mut infos = vec![
-									title.clone().into(),
-									"".into(),
-									broadcaster_display_name.clone().into(),
-									[
-										"Tags: ",
-										&freeformTags
-											.iter()
-											.map(|tag| tag.name.clone())
-											.collect::<Vec<String>>()
-											.join(", "),
-									]
-									.concat()
-									.into(),
-									["Viewers: ", &viewersCount.to_string()].concat().into(),
-								];
-
-								if let Some(
-									Game {
-										displayName: Some(name),
-										..
-									}
-									| Game { name, .. },
-								) = game
-								{
-									infos.push(["Game: ", name].concat().into());
-								}
-
-								if let Some(created_at) = createdAt {
-									infos.push(
-										["Created: ", &format_date(created_at)].concat().into(),
-									);
-								}
-
-								(broadcaster_display_name.clone(), infos)
-							}
-							_ => continue,
-						};
-
-						titles.push(ListItem::new(spaced(title)));
-						info.push((
-							Paragraph::new(Text { lines }).wrap(Wrap { trim: false }),
-							edge.node,
-						));
-					}
-				}
-			}
-			Data::Game {
-				game: Category {
-					streams: StreamConnection { edges },
-				},
-			} => {
-				for edge in edges {
-					let style = edge.node.broadcaster.style();
-
-					titles.push(
-						ListItem::new(spaced(edge.node.broadcaster.displayName.clone()))
-							.style(style),
-					);
-					info.push((
-						Paragraph::new(Text {
-							lines: vec![
-								edge.node.title.into(),
-								"".into(),
-								edge.node.broadcaster.displayName.clone().into(),
-								["Viewers: ", &edge.node.viewersCount.to_string()]
-									.concat()
-									.into(),
-								[
-									"Game: ",
-									&edge.node.game.displayName.unwrap_or(edge.node.game.name),
-								]
-								.concat()
+				titles.push(ListItem::new(spaced(channel.user.displayName.clone())).style(style));
+				info.push((
+					Paragraph::new(Text {
+						lines: vec![
+							channel
+								.user
+								.broadcastSettings
+								.as_ref()
+								.expect("Should be a broadcast")
+								.title
+								.clone()
 								.into(),
-								["Created: ", &format_date(&edge.node.createdAt)]
-									.concat()
-									.into(),
-								[
-									"Tags: ",
-									&edge
-										.node
-										.freeformTags
-										.iter()
-										.map(|tag| tag.name.clone())
-										.collect::<Vec<String>>()
-										.join(", "),
-								]
-								.concat()
-								.into(),
-							],
-						})
-						.style(style)
-						.wrap(Wrap { trim: false }),
-						edge.node.broadcaster.as_node(),
-					));
-				}
-			}
-			Data::SearchFor {
-				searchFor:
-					SearchFor {
-						channels,
-						channelsWithTag,
-						games,
-						videos,
-						relatedLiveChannels,
-					},
-			} => {
-				// We need to add these later in the right order, based on score
-				// We can't do `[_; 5]` because tuples don't implement `Copy`
-				let mut items_to_add = [
-					(Vec::new(), Vec::new()),
-					(Vec::new(), Vec::new()),
-					(Vec::new(), Vec::new()),
-					(Vec::new(), Vec::new()),
-					(Vec::new(), Vec::new()),
-				];
-
-				if !channels.edges.is_empty() {
-					items_to_add[channels.score - 1].0.push(header("Channels"));
-
-					items_to_add[channels.score - 1].1.push((
-						Paragraph::new(
-							["Total matches: ", &channels.totalMatches.to_string()].concat(),
-						),
-						Node::None,
-					));
-
-					for edge in channels.edges {
-						edge.item
-							.add_items_to(&mut items_to_add[channels.score - 1]);
-					}
-				}
-				if !channelsWithTag.edges.is_empty() {
-					items_to_add[channelsWithTag.score - 1]
-						.0
-						.push(header("Live channels with tag"));
-
-					items_to_add[channelsWithTag.score - 1].1.push((
-						Paragraph::new(
-							["Total matches: ", &channelsWithTag.totalMatches.to_string()].concat(),
-						),
-						Node::None,
-					));
-
-					for edge in channelsWithTag.edges {
-						edge.item
-							.add_items_to(&mut items_to_add[channelsWithTag.score - 1]);
-					}
-				}
-				if !games.edges.is_empty() {
-					items_to_add[games.score - 1].0.push(header("Categories"));
-
-					items_to_add[games.score - 1].1.push((
-						Paragraph::new(
-							["Total matches: ", &games.totalMatches.to_string()].concat(),
-						),
-						Node::None,
-					));
-
-					for edge in games.edges {
-						items_to_add[games.score - 1].0.push(
-							edge.item
-								.displayName
-								.unwrap_or(edge.item.name.clone())
-								.into(),
-						);
-
-						let mut lines = Vec::new();
-
-						if let Some(viewers_count) = edge.item.viewersCount {
-							lines.push(["Viewers: ", &viewers_count.to_string()].concat().into());
-						}
-
-						if let Some(tags) = edge.item.gameTags {
-							lines.push(
-								[
-									"Tags: ",
-									&tags
-										.into_iter()
-										.map(|tag| tag.localizedName)
-										.collect::<Vec<String>>()
-										.join(", "),
-								]
-								.concat()
-								.into(),
-							);
-						}
-
-						items_to_add[games.score - 1].1.push((
-							Paragraph::new(lines).wrap(Wrap { trim: false }),
-							Node::Game(Game {
-								viewersCount: None,
-								name: edge.item.name,
-								displayName: None,
-								gameTags: None,
-								originalReleaseDate: None,
-							}),
-						));
-					}
-				}
-				if !videos.edges.is_empty() {
-					items_to_add[videos.score - 1].0.push(header("Past videos"));
-
-					items_to_add[videos.score - 1].1.push((
-						Paragraph::new(
-							["Total matches: ", &videos.totalMatches.to_string()].concat(),
-						),
-						Node::None,
-					));
-
-					for edge in videos.edges {
-						items_to_add[videos.score - 1]
-							.0
-							.push(edge.item.title.into());
-
-						let mut lines = vec![
-							edge.item.owner.displayName.into(),
 							"".into(),
-							["Created: ", &format_date(&edge.item.createdAt)]
+							channel.user.displayName.clone().into(),
+							["Viewers: ", &channel.content.viewersCount.to_string()]
 								.concat()
 								.into(),
 							[
 								"Game: ",
-								&edge.item.game.displayName.unwrap_or(edge.item.game.name),
+								&channel
+									.content
+									.game
+									.displayName
+									.unwrap_or(channel.content.game.name),
 							]
 							.concat()
 							.into(),
-							["Length: ", &edge.item.lengthSeconds.to_string(), " s"]
-								.concat()
-								.into(),
-							["Views: ", &edge.item.viewCount.to_string()]
-								.concat()
-								.into(),
-						];
-
-						if let Some(roles) = edge.item.owner.roles {
-							lines.push(
-								["Partner: ", if roles.isPartner { "Yes" } else { "No" }]
-									.concat()
-									.into(),
-							);
-						}
-
-						items_to_add[videos.score - 1].1.push((
-							Paragraph::new(lines).wrap(Wrap { trim: false }),
-							Node::Video(edge.item.id),
-						));
-					}
-				}
-
-				if !relatedLiveChannels.edges.is_empty() {
-					items_to_add[relatedLiveChannels.score - 1]
-						.0
-						.push(header("People searching also watch:"));
-
-					items_to_add[relatedLiveChannels.score - 1]
-						.1
-						.push((Paragraph::new(""), Node::None));
-
-					for edge in relatedLiveChannels.edges {
-						let style = edge.item.stream.broadcaster.style();
-						let node = edge.item.stream.broadcaster.as_node();
-
-						items_to_add[relatedLiveChannels.score - 1].0.push(Span {
-							content: edge.item.stream.broadcaster.displayName.clone().into(),
-							style,
-						});
-
-						let mut lines = Vec::new();
-
-						if let Some(broadcast_settings) =
-							edge.item.stream.broadcaster.broadcastSettings
-						{
-							lines.extend([broadcast_settings.title.into(), "".into()]);
-						}
-
-						lines.extend([
-							["Viewers: ", &edge.item.stream.viewersCount.to_string()]
-								.concat()
-								.into(),
-							["Game: ", &edge.item.stream.game.name].concat().into(),
-						]);
-
-						if let Some(roles) = edge.item.stream.broadcaster.roles {
-							lines.push(
-								["Partner: ", if roles.isPartner { "Yes" } else { "No" }]
-									.concat()
-									.into(),
-							);
-						}
-
-						items_to_add[relatedLiveChannels.score - 1].1.push((
-							Paragraph::new(lines)
-								.style(style)
-								.wrap(Wrap { trim: false }),
-							node,
-						));
-					}
-				}
-
-				// Add the sections in score order
-				for items in items_to_add {
-					titles.extend(items.0.into_iter().map(|span| {
-						ListItem::new(spaced(span.clone())).style(Style {
-							fg: span.style.fg,
-							..Style::default()
-						})
-					}));
-					info.extend(items.1);
-				}
+						],
+					})
+					.style(style)
+					.wrap(Wrap { trim: false }),
+					channel.user.as_node(),
+				));
 			}
 		}
 
@@ -1721,4 +1228,541 @@ impl TwitchResponse {
 			info,
 		)
 	}
+}
+
+#[derive(Deserialize)]
+pub struct ShelvesData {
+	shelves: ShelfConnection,
+}
+impl Data for ShelvesData {
+	fn into_widgets<'a>(self) -> (List<'a>, Vec<(Paragraph<'a>, Node)>) {
+		let mut titles = Vec::new();
+		let mut info = Vec::new();
+
+		for edge in self.shelves.edges {
+			// Category title
+			// Use fallback title if any tokens are null
+			titles.push(
+				if edge
+					.node
+					.title
+					.localizedTitleTokens
+					.iter()
+					.any(|x| matches!(x.node, TextToken::None))
+				{
+					// Fallback string
+					ListItem::new(spaced(header(edge.node.title.fallbackLocalizedTitle)))
+				} else {
+					ListItem::new(spaced(Spans(
+						edge.node
+							.title
+							.localizedTitleTokens
+							.into_iter()
+							.map(|token| {
+								match token.node {
+									TextToken::BrowsableCollection {
+										collectionName:
+											BrowsableCollectionTitle {
+												fallbackLocalizedTitle,
+											},
+									} => header(fallbackLocalizedTitle),
+									TextToken::Game(Game {
+										displayName, name, ..
+									}) => header(displayName.unwrap_or(name)),
+									TextToken::TextToken { text, hasEmphasis } => Span {
+										content: text.into(),
+										style: Style {
+											add_modifier: if hasEmphasis {
+												Modifier::BOLD
+											} else {
+												Modifier::empty()
+											} | Modifier::UNDERLINED,
+											..Style::default()
+										},
+									},
+									// We already filtered this out
+									TextToken::None => unreachable!(),
+								}
+							})
+							.collect::<Vec<Span>>(),
+					)))
+				},
+			);
+
+			info.push((Paragraph::new(Text { lines: Vec::new() }), Node::None));
+
+			for edge in edge.node.content.edges {
+				// Category items
+				let (title, lines) = match &edge.node {
+					Node::Clip {
+						clipTitle,
+						clipViewCount,
+						curator: User {
+							displayName: curator_display_name,
+							..
+						},
+						game:
+							Game {
+								displayName: game_display_name,
+								name: game_name,
+								..
+							},
+						broadcaster:
+							User {
+								displayName: broadcaster_display_name,
+								..
+							},
+						clipCreatedAt,
+						durationSeconds,
+						language,
+						..
+					} => (
+						clipTitle.clone(),
+						vec![
+							clipTitle.clone().into(),
+							"".into(),
+							["Views: ", &clipViewCount.to_string()].concat().into(),
+							["Curator: ", curator_display_name].concat().into(),
+							[
+								"Game: ",
+								&game_display_name.clone().unwrap_or(game_name.clone()),
+							]
+							.concat()
+							.into(),
+							["Broadcaster: ", broadcaster_display_name].concat().into(),
+							["Clip created: ", &format_date(clipCreatedAt)]
+								.concat()
+								.into(),
+							["Duration: ", &durationSeconds.to_string(), "s"]
+								.concat()
+								.into(),
+							["Language: ", language].concat().into(),
+						],
+					),
+					Node::Game(Game {
+						viewersCount,
+						displayName,
+						name,
+						gameTags,
+						originalReleaseDate,
+						..
+					}) => {
+						let mut lines = vec![
+							displayName.clone().unwrap_or(name.clone()).into(),
+							"".into(),
+						];
+
+						if let Some(viewers_count) = viewersCount {
+							lines.push(["Viewers: ", &viewers_count.to_string()].concat().into());
+						}
+
+						if let Some(game_tags) = gameTags {
+							lines.push(
+								[
+									"Tags: ",
+									&game_tags
+										.iter()
+										.map(|tag| tag.localizedName.clone())
+										.collect::<Vec<String>>()
+										.join(", "),
+								]
+								.concat()
+								.into(),
+							)
+						}
+
+						if let Some(original_release_date) = originalReleaseDate {
+							lines.push(
+								["Released: ", &format_date(original_release_date)]
+									.concat()
+									.into(),
+							)
+						}
+
+						(displayName.clone().unwrap_or(name.clone()).clone(), lines)
+					}
+					Node::Stream {
+						broadcaster:
+							User {
+								displayName: broadcaster_display_name,
+								broadcastSettings: Some(BroadcastSettings { title }),
+								..
+							},
+						game,
+						freeformTags,
+						viewersCount,
+						createdAt,
+					} => {
+						let mut infos = vec![
+							title.clone().into(),
+							"".into(),
+							broadcaster_display_name.clone().into(),
+							[
+								"Tags: ",
+								&freeformTags
+									.iter()
+									.map(|tag| tag.name.clone())
+									.collect::<Vec<String>>()
+									.join(", "),
+							]
+							.concat()
+							.into(),
+							["Viewers: ", &viewersCount.to_string()].concat().into(),
+						];
+
+						if let Some(
+							Game {
+								displayName: Some(name),
+								..
+							}
+							| Game { name, .. },
+						) = game
+						{
+							infos.push(["Game: ", name].concat().into());
+						}
+
+						if let Some(created_at) = createdAt {
+							infos.push(["Created: ", &format_date(created_at)].concat().into());
+						}
+
+						(broadcaster_display_name.clone(), infos)
+					}
+					_ => continue,
+				};
+
+				titles.push(ListItem::new(spaced(title)));
+				info.push((
+					Paragraph::new(Text { lines }).wrap(Wrap { trim: false }),
+					edge.node,
+				));
+			}
+		}
+
+		(
+			List::new(titles).highlight_style(Style {
+				add_modifier: Modifier::REVERSED,
+				..Style::default()
+			}),
+			info,
+		)
+	}
+}
+
+#[derive(Deserialize)]
+pub struct GameData {
+	game: Category,
+}
+impl Data for GameData {
+	fn into_widgets<'a>(self) -> (List<'a>, Vec<(Paragraph<'a>, Node)>) {
+		let mut titles = Vec::new();
+		let mut info = Vec::new();
+
+		for edge in self.game.streams.edges {
+			let style = edge.node.broadcaster.style();
+
+			titles.push(
+				ListItem::new(spaced(edge.node.broadcaster.displayName.clone())).style(style),
+			);
+			info.push((
+				Paragraph::new(Text {
+					lines: vec![
+						edge.node.title.into(),
+						"".into(),
+						edge.node.broadcaster.displayName.clone().into(),
+						["Viewers: ", &edge.node.viewersCount.to_string()]
+							.concat()
+							.into(),
+						[
+							"Game: ",
+							&edge.node.game.displayName.unwrap_or(edge.node.game.name),
+						]
+						.concat()
+						.into(),
+						["Created: ", &format_date(&edge.node.createdAt)]
+							.concat()
+							.into(),
+						[
+							"Tags: ",
+							&edge
+								.node
+								.freeformTags
+								.iter()
+								.map(|tag| tag.name.clone())
+								.collect::<Vec<String>>()
+								.join(", "),
+						]
+						.concat()
+						.into(),
+					],
+				})
+				.style(style)
+				.wrap(Wrap { trim: false }),
+				edge.node.broadcaster.as_node(),
+			));
+		}
+
+		(
+			List::new(titles).highlight_style(Style {
+				add_modifier: Modifier::REVERSED,
+				..Style::default()
+			}),
+			info,
+		)
+	}
+}
+
+#[derive(Deserialize)]
+pub struct SearchForData {
+	searchFor: SearchFor,
+}
+impl Data for SearchForData {
+	fn into_widgets<'a>(self) -> (List<'a>, Vec<(Paragraph<'a>, Node)>) {
+		let mut titles = Vec::new();
+		let mut info = Vec::new();
+
+		// We need to add these later in the right order, based on score
+		// We can't do `[_; 5]` because tuples don't implement `Copy`
+		let mut items_to_add = [
+			(Vec::new(), Vec::new()),
+			(Vec::new(), Vec::new()),
+			(Vec::new(), Vec::new()),
+			(Vec::new(), Vec::new()),
+			(Vec::new(), Vec::new()),
+		];
+
+		if !self.searchFor.channels.edges.is_empty() {
+			items_to_add[self.searchFor.channels.score - 1]
+				.0
+				.push(header("Channels"));
+
+			items_to_add[self.searchFor.channels.score - 1].1.push((
+				Paragraph::new(
+					[
+						"Total matches: ",
+						&self.searchFor.channels.totalMatches.to_string(),
+					]
+					.concat(),
+				),
+				Node::None,
+			));
+
+			for edge in self.searchFor.channels.edges {
+				edge.item
+					.add_items_to(&mut items_to_add[self.searchFor.channels.score - 1]);
+			}
+		}
+		if !self.searchFor.channelsWithTag.edges.is_empty() {
+			items_to_add[self.searchFor.channelsWithTag.score - 1]
+				.0
+				.push(header("Live channels with tag"));
+
+			items_to_add[self.searchFor.channelsWithTag.score - 1]
+				.1
+				.push((
+					Paragraph::new(
+						[
+							"Total matches: ",
+							&self.searchFor.channelsWithTag.totalMatches.to_string(),
+						]
+						.concat(),
+					),
+					Node::None,
+				));
+
+			for edge in self.searchFor.channelsWithTag.edges {
+				edge.item
+					.add_items_to(&mut items_to_add[self.searchFor.channelsWithTag.score - 1]);
+			}
+		}
+		if !self.searchFor.games.edges.is_empty() {
+			items_to_add[self.searchFor.games.score - 1]
+				.0
+				.push(header("Categories"));
+
+			items_to_add[self.searchFor.games.score - 1].1.push((
+				Paragraph::new(
+					[
+						"Total matches: ",
+						&self.searchFor.games.totalMatches.to_string(),
+					]
+					.concat(),
+				),
+				Node::None,
+			));
+
+			for edge in self.searchFor.games.edges {
+				items_to_add[self.searchFor.games.score - 1].0.push(
+					edge.item
+						.displayName
+						.unwrap_or(edge.item.name.clone())
+						.into(),
+				);
+
+				let mut lines = Vec::new();
+
+				if let Some(viewers_count) = edge.item.viewersCount {
+					lines.push(["Viewers: ", &viewers_count.to_string()].concat().into());
+				}
+
+				if let Some(tags) = edge.item.gameTags {
+					lines.push(
+						[
+							"Tags: ",
+							&tags
+								.into_iter()
+								.map(|tag| tag.localizedName)
+								.collect::<Vec<String>>()
+								.join(", "),
+						]
+						.concat()
+						.into(),
+					);
+				}
+
+				items_to_add[self.searchFor.games.score - 1].1.push((
+					Paragraph::new(lines).wrap(Wrap { trim: false }),
+					Node::Game(Game {
+						viewersCount: None,
+						name: edge.item.name,
+						displayName: None,
+						gameTags: None,
+						originalReleaseDate: None,
+					}),
+				));
+			}
+		}
+		if !self.searchFor.videos.edges.is_empty() {
+			items_to_add[self.searchFor.videos.score - 1]
+				.0
+				.push(header("Past videos"));
+
+			items_to_add[self.searchFor.videos.score - 1].1.push((
+				Paragraph::new(
+					[
+						"Total matches: ",
+						&self.searchFor.videos.totalMatches.to_string(),
+					]
+					.concat(),
+				),
+				Node::None,
+			));
+
+			for edge in self.searchFor.videos.edges {
+				items_to_add[self.searchFor.videos.score - 1]
+					.0
+					.push(edge.item.title.into());
+
+				let mut lines = vec![
+					edge.item.owner.displayName.into(),
+					"".into(),
+					["Created: ", &format_date(&edge.item.createdAt)]
+						.concat()
+						.into(),
+					[
+						"Game: ",
+						&edge.item.game.displayName.unwrap_or(edge.item.game.name),
+					]
+					.concat()
+					.into(),
+					["Length: ", &edge.item.lengthSeconds.to_string(), " s"]
+						.concat()
+						.into(),
+					["Views: ", &edge.item.viewCount.to_string()]
+						.concat()
+						.into(),
+				];
+
+				if let Some(roles) = edge.item.owner.roles {
+					lines.push(
+						["Partner: ", if roles.isPartner { "Yes" } else { "No" }]
+							.concat()
+							.into(),
+					);
+				}
+
+				items_to_add[self.searchFor.videos.score - 1].1.push((
+					Paragraph::new(lines).wrap(Wrap { trim: false }),
+					Node::Video(edge.item.id),
+				));
+			}
+		}
+
+		if !self.searchFor.relatedLiveChannels.edges.is_empty() {
+			items_to_add[self.searchFor.relatedLiveChannels.score - 1]
+				.0
+				.push(header("People searching also watch:"));
+
+			items_to_add[self.searchFor.relatedLiveChannels.score - 1]
+				.1
+				.push((Paragraph::new(""), Node::None));
+
+			for edge in self.searchFor.relatedLiveChannels.edges {
+				let style = edge.item.stream.broadcaster.style();
+				let node = edge.item.stream.broadcaster.as_node();
+
+				items_to_add[self.searchFor.relatedLiveChannels.score - 1]
+					.0
+					.push(Span {
+						content: edge.item.stream.broadcaster.displayName.clone().into(),
+						style,
+					});
+
+				let mut lines = Vec::new();
+
+				if let Some(broadcast_settings) = edge.item.stream.broadcaster.broadcastSettings {
+					lines.extend([broadcast_settings.title.into(), "".into()]);
+				}
+
+				lines.extend([
+					["Viewers: ", &edge.item.stream.viewersCount.to_string()]
+						.concat()
+						.into(),
+					["Game: ", &edge.item.stream.game.name].concat().into(),
+				]);
+
+				if let Some(roles) = edge.item.stream.broadcaster.roles {
+					lines.push(
+						["Partner: ", if roles.isPartner { "Yes" } else { "No" }]
+							.concat()
+							.into(),
+					);
+				}
+
+				items_to_add[self.searchFor.relatedLiveChannels.score - 1]
+					.1
+					.push((
+						Paragraph::new(lines)
+							.style(style)
+							.wrap(Wrap { trim: false }),
+						node,
+					));
+			}
+		}
+
+		// Add the sections in score order
+		for items in items_to_add {
+			titles.extend(items.0.into_iter().map(|span| {
+				ListItem::new(spaced(span.clone())).style(Style {
+					fg: span.style.fg,
+					..Style::default()
+				})
+			}));
+			info.extend(items.1);
+		}
+
+		(
+			List::new(titles).highlight_style(Style {
+				add_modifier: Modifier::REVERSED,
+				..Style::default()
+			}),
+			info,
+		)
+	}
+}
+
+/// Response from the `PersonalSections` API call.
+#[derive(Deserialize, Debug)]
+pub struct TwitchResponse<D: Data> {
+	pub data: D,
+	// Ignore `extensions`
 }
