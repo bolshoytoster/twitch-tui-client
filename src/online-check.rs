@@ -1,5 +1,5 @@
 //! Check if the FOLLOWING channels are online, returning a space separated list of online
-//! channels.
+//! channels. Fails silently if it can't parse the server's response.
 
 #![allow(non_snake_case)]
 #![allow(dead_code)]
@@ -49,7 +49,8 @@ struct User {
 
 #[derive(Deserialize)]
 struct Data {
-	user: User,
+	/// Will be null if the user doesn't exist or has been banned
+	user: Option<User>,
 }
 
 #[derive(Deserialize)]
@@ -103,14 +104,14 @@ fn main() {
 
 		let _ = transfer.perform();
 	}
-
+	
 	if let Ok(responses) = from_slice::<Vec<Response>>(&mut vec) {
 		print!(
 			"{}",
 			responses
 				.into_iter()
 				.enumerate()
-				.filter_map(|(i, response)| response.data.user.stream.map(|_| FOLLOWING[i]))
+				.filter_map(|(i, response)| response.data.user.and_then(|user| user.stream).map(|_| FOLLOWING[i]))
 				.collect::<Vec<_>>()
 				.join(" ")
 		);

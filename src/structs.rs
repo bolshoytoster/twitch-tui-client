@@ -561,10 +561,7 @@ impl Node {
 					)
 					.spawn()
 					.unwrap_or_else(|_| {
-						panic!(
-							"{}",
-							["Should be able to spawn PLAYER (", &PLAYER.join(" "), ")"].concat()
-						)
+						panic!("Should be able to spawn PLAYER ({})", &PLAYER.join(" "))
 					})
 					.wait();
 

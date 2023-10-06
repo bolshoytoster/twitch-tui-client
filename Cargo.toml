@@ -10,15 +10,17 @@ default-run = "twitch-tui"
 name = "twitch-tui"
 path = "src/main.rs"
 
+required-features = ["ui"]
+
 [[bin]]
 name = "online-check"
 path = "src/online-check.rs"
 
 [dependencies]
 # TUI library (my fork)
-ratatui = { git = "https://github.com/bolshoytoster/ratatui" }
+ratatui = { git = "https://github.com/bolshoytoster/ratatui", optional = true }
 # ratatui backend
-crossterm = "*"
+crossterm = { version = "*", optional = true }
 # {,De}serialization
 serde = { version = "*", features = ["derive"] }
 # JSON (faster than the serde one)
@@ -40,5 +42,7 @@ tokio-tungstenite = { version = "*", features = ["native-tls"], optional = true 
 
 [features]
 default = ["chat"]
+# Only used for the tui
+ui = ["ratatui", "crossterm"]
 # These are only needed for chat
-chat = ["irc", "crossterm/event-stream", "textwrap", "tokio", "futures", "tokio-tungstenite"]
+chat = ["irc", "crossterm/event-stream", "textwrap", "tokio", "futures", "tokio-tungstenite", "ui"]
